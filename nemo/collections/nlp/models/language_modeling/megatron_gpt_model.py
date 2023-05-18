@@ -341,6 +341,8 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         return output_tensor
 
     def fwd_bwd_step(self, dataloader_iter, batch_idx, forward_only):
+        if batch_idx < 5:
+            logging.info(f"[CRANKSHAW DEBUG] Entering fwd_bwd_step {batch_idx=}")
         tensor_shape = [self.cfg.encoder_seq_length, self.cfg.micro_batch_size, self.cfg.hidden_size]
 
         # handle asynchronous grad reduction
@@ -373,6 +375,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
             param_sync_func=param_sync_func,
         )
 
+
         # only the last stages of the pipeline return losses
         if losses_reduced_per_micro_batch:
             if (not forward_only) or self.cfg.data.get('validation_drop_last', True):
@@ -399,6 +402,9 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                 loss_mean = []
             else:
                 loss_mean = torch.tensor(0.0).cuda()
+
+        if batch_idx < 5:
+            logging.info(f"[CRANKSHAW DEBUG] Exiting fwd_bwd_step {batch_idx=}")
 
         return loss_mean
 
@@ -639,7 +645,9 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
 
             # Get data batch
+            logging.info(f"[CRANKSHAW DEBUG] XXXXXXXXX Getting data batch from dataloader iter")
             batch = next(dataloader_iter)
+            logging.info(f"[CRANKSHAW DEBUG] YYYYYYYYY Got data batch from dataloader iter")
 
             # Transfer needed data to GPU
             required_keys = set()
@@ -913,12 +921,15 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         if stage == 'predict':
             return
         else:
+            logging.info(f"[CRANKSHAW DEBUG] XXXXXXXXXXXXXXXXX Starting to setup training data")
+
             # TODO: consider adding a ModelPT guard to check if model is being restored.
             # allowing restored models to optionally setup datasets
             self.build_train_valid_test_datasets()
             self.setup_training_data(self.cfg.data)
             self.setup_validation_data(self.cfg.data)
             self.setup_test_data(self.cfg.data)
+            logging.info(f"[CRANKSHAW DEBUG] YYYYYYYYYYYYY Finished setting up training data")
 
         # when using pipeline model parallel the final stage need to initialize word embeddings
         if parallel_state.get_pipeline_model_parallel_world_size() > 1:
