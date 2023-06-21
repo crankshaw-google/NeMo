@@ -44,6 +44,8 @@ def main(cfg) -> None:
     megatron_amp_o2 = cfg.model.get('megatron_amp_O2', False)
     with_distributed_adam = cfg.model.optim.get('name') == 'distributed_fused_adam'
 
+    print(cfg.model.parallelism_spec)
+
     # nvtx.init(enable_function_stack=True)
     with torch.autograd.profiler.emit_nvtx():
 
