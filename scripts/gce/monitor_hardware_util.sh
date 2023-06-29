@@ -6,8 +6,8 @@
 declare -A METRIC_ID_TO_KIND
 declare -A METRIC_ID_TO_TYPE
 
-declare -A NETWORK_DEVICE_TO_TX_COUNTER
-declare -A NETWORK_DEVICE_TO_RX_COUNTER
+declare -A NETWORK_DEVICE_TO_INITIAL_TX_COUNTER
+declare -A NETWORK_DEVICE_TO_INITIAL_RX_COUNTER
 
 main_loop() {
    perform_initialization "$@"
@@ -78,14 +78,14 @@ initialize_nic_counters() {
       RX=$(/usr/sbin/ifconfig "$DEVICE" | gawk '{ if (match($0,/.*RX.*bytes ([^ ]*) /,m)) print m[1] }')
       echo "Found network device $DEVICE with counters TX $TX and RX $RX bytes"
 
-      NETWORK_DEVICE_TO_TX_COUNTER[$DEVICE]=$TX
-      NETWORK_DEVICE_TO_RX_COUNTER[$DEVICE]=$RX      
+      NETWORK_DEVICE_TO_INITIAL_TX_COUNTER[$DEVICE]=$TX
+      NETWORK_DEVICE_TO_INITIAL_RX_COUNTER[$DEVICE]=$RX
    done
    NIC_CAPTURE_TIME=$(date +%s)
 }
-  
+
 enable_nvidia_persistence_mode() {
-   nvidia-smi -pm 1 
+   nvidia-smi -pm 1
 }
 
 get_vm_metadata() {
@@ -293,15 +293,15 @@ emit_gpu_utilization() {
               *)
                  METRIC_ID=${COL_INDEX_TO_METRIC_ID[$COL_INDEX]}
                  case $METRIC_ID in
-                    "gpu") 
+                    "gpu")
                        identifiers["gpu_number"]="$VALUE"
                        ;;
-                    "sm")  
+                    "sm")
                        GPU_LOAD=$(echo "scale=2; $VALUE / 100"| bc | awk '{printf "%f", $0}')
-                       emit_metric "gpu/load" "$GPU_LOAD" identifiers 
+                       emit_metric "gpu/load" "$GPU_LOAD" identifiers
                        ;;
-                    "fb")  
-                       emit_metric "gpu/memory" "$(echo "$VALUE * 1024 * 1024" | bc)" identifiers 
+                    "fb")
+                       emit_metric "gpu/memory" "$(echo "$VALUE * 1024 * 1024" | bc)" identifiers
                        ;;
                  esac
                  ;;
@@ -321,8 +321,8 @@ emit_nic_utilization() {
       TX=$(/usr/sbin/ifconfig "$DEVICE" | gawk '{ if (match($0,/.*TX.*bytes ([^ ]*) /,m)) print m[1] }')
       RX=$(/usr/sbin/ifconfig "$DEVICE" | gawk '{ if (match($0,/.*RX.*bytes ([^ ]*) /,m)) print m[1] }')
 
-      TX_DELTA=$(echo "$TX - ${NETWORK_DEVICE_TO_TX_COUNTER[$DEVICE]}" | bc)
-      RX_DELTA=$(echo "$RX - ${NETWORK_DEVICE_TO_RX_COUNTER[$DEVICE]}" | bc)
+      TX_DELTA=$(echo "$TX - ${NETWORK_DEVICE_TO_INITIAL_TX_COUNTER[$DEVICE]}" | bc)
+      RX_DELTA=$(echo "$RX - ${NETWORK_DEVICE_TO_INITIAL_RX_COUNTER[$DEVICE]}" | bc)
 
       identifiers["interface"]="$DEVICE"
 
@@ -331,9 +331,6 @@ emit_nic_utilization() {
 
       identifiers["direction"]="rx"
       emit_metric "nic/traffic" "$RX_DELTA" identifiers
-
-      NETWORK_DEVICE_TO_TX_COUNTER[$DEVICE]=$TX
-      NETWORK_DEVICE_TO_RX_COUNTER[$DEVICE]=$RX      
    done
    NIC_CAPTURE_TIME=$(date +%s)
 }
