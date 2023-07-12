@@ -25,6 +25,7 @@ from nemo.collections.nlp.parts.nlp_overrides import (
     CustomProgressBar,
     FSDPMixedPrecisionPlugin,
     GradScaler,
+    LayerUnitTestStrategy,
     MegatronHalfPrecisionPlugin,
     NLPDDPStrategy,
     NLPDDPStrategyNotebook,
@@ -72,7 +73,7 @@ class MegatronTrainerBuilder:
             if self.cfg.model.get('megatron_amp_O2', False):
                 logging.info('Torch FSDP is not compatible with O2 precision recipe. Setting O2 `False`.')
                 self.cfg.model.megatron_amp_O2 = False
-            return NLPFSDPStrategy(
+            strategy =  NLPFSDPStrategy(
                 limit_all_gathers=self.cfg.model.get('fsdp_limit_all_gathers', True),
                 sharding_strategy=self.cfg.model.get('fsdp_sharding_strategy', 'full'),
                 cpu_offload=self.cfg.model.get('fsdp_cpu_offload', False),
@@ -83,14 +84,26 @@ class MegatronTrainerBuilder:
                 sharp=self.cfg.model.get('sharp', False),
                 use_orig_params=self.cfg.model.get('fsdp_use_orig_params', False),
             )
-
-        return NLPDDPStrategy(
-            no_ddp_communication_hook=True,
-            gradient_as_bucket_view=self.cfg.model.gradient_as_bucket_view,
-            find_unused_parameters=False,
-            nccl_communicator_config_path=self.cfg.model.get('nccl_communicator_config_path', None),
-            sharp=self.cfg.model.get('sharp', False),
-        )
+        elif self.cfg.model.get('parallelization_specs', None) is not None:
+            strategy = LayerUnitTestStrategy(
+                no_ddp_communication_hook=True,  # we don't use DDP for async grad allreduce
+                gradient_as_bucket_view=cfg.model.gradient_as_bucket_view,
+                find_unused_parameters=False,
+                parallelization_specs=cfg.model.parallelization_specs,
+                micro_batch_size=cfg.model.micro_batch_size,
+            )
+            logging.info('**Using LayerUnitTestStrategy**')
+        else:
+            strategy = NLPDDPStrategy(
+                no_ddp_communication_hook=True,
+                gradient_as_bucket_view=self.cfg.model.gradient_as_bucket_view,
+                find_unused_parameters=False,
+                nccl_communicator_config_path=self.cfg.model.get('nccl_communicator_config_path', None),
+                sharp=self.cfg.model.get('sharp', False),
+            )
+            logging.info('**Using NLPDDPStrategy**')
+        
+        return strategy
 
     def _grad_scaler(self) -> GradScaler:
         """

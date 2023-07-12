@@ -126,6 +126,7 @@ def get_language_model(
     use_flash_attention=False,
     seq_len_interpolation_factor=None,
     rotary_base=10000,
+    parallelization_specs=None,
 ):
     """Build language model and return along with the key to save."""
 
@@ -202,6 +203,7 @@ def get_language_model(
         use_flash_attention=use_flash_attention,
         seq_len_interpolation_factor=seq_len_interpolation_factor,
         rotary_base=rotary_base,
+        parallelization_specs=parallelization_specs,
     )
     # key used for checkpoints.
     language_model_key = 'language_model'
@@ -513,6 +515,7 @@ class TransformerLanguageModel(MegatronModule, adapter_mixins.AdapterModuleMixin
         use_flash_attention=False,
         seq_len_interpolation_factor=None,
         rotary_base=10000,
+        parallelization_specs=None,
     ):
         super(TransformerLanguageModel, self).__init__(
             config=config, share_token_embeddings=share_embeddings_and_output_weights
@@ -655,6 +658,7 @@ class TransformerLanguageModel(MegatronModule, adapter_mixins.AdapterModuleMixin
             ub_tp_comm_overlap=ub_tp_comm_overlap,
             position_embedding_type=position_embedding_type,
             use_flash_attention=use_flash_attention,
+            parallelization_specs=parallelization_specs,
         )
         self._encoder_key = 'encoder'
 
@@ -694,6 +698,7 @@ class TransformerLanguageModel(MegatronModule, adapter_mixins.AdapterModuleMixin
                 transformer_engine=transformer_engine,
                 position_embedding_type=position_embedding_type,
                 use_flash_attention=use_flash_attention,
+                parallelization_specs=parallelization_specs,
             )
             self._decoder_key = 'decoder'
 

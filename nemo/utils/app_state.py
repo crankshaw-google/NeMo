@@ -41,6 +41,7 @@ class AppState(metaclass=Singleton):
         self._tensor_model_parallel_rank = None
         self._expert_model_parallel_rank = None
         self._pipeline_model_parallel_rank = None
+        self._pipeline_component_parallel_rank = None
         self._data_parallel_rank = None
 
         self._world_size = None
@@ -193,6 +194,22 @@ class AppState(metaclass=Singleton):
         self._pipeline_model_parallel_size = size
 
     @property
+    def pipeline_component_parallel_size(self):
+        """ Property returns the number of GPUs in each component parallel group.
+            Returns:
+                Number of GPUs in each component parallel group.
+        """
+        return self._pipeline_component_parallel_size
+
+    @pipeline_component_parallel_size.setter
+    def pipeline_component_parallel_size(self, size):
+        """ Property sets the number of GPUs in each component parallel group.
+            Args:
+                size (int):  Number of GPUs in each component parallel group.
+        """
+        self._pipeline_component_parallel_size = size
+
+    @property
     def use_tp_pp_dp_mapping(self):
         return self._use_tp_pp_dp_mapping
 
@@ -313,6 +330,22 @@ class AppState(metaclass=Singleton):
         self._pipeline_model_parallel_rank = rank
 
     @property
+    def pipeline_component_parallel_rank(self):
+        """ Property returns the pipeline component parallel rank.
+            Returns:
+                Pipeline component parallel rank.
+        """
+        return self._pipeline_component_parallel_rank
+
+    @pipeline_component_parallel_rank.setter
+    def pipeline_component_parallel_rank(self, rank):
+        """ Property sets the pipeline component parallel rank.
+            Args:
+                rank (int):  Pipeline component parallel rank.
+        """
+        self._pipeline_component_parallel_rank = rank
+
+    @property
     def virtual_pipeline_model_parallel_rank(self):
         """ Property returns the virtual pipeline parallel rank.
             Returns:
@@ -359,6 +392,22 @@ class AppState(metaclass=Singleton):
                 group:  Pipeline model parallel group.
         """
         self._pipeline_model_parallel_group = group
+
+    @property
+    def pipeline_component_parallel_group(self):
+        """ Property returns the pipeline component parallel group.
+            Returns:
+                Pipeline component parallel group.
+        """
+        return self._pipeline_component_parallel_group
+
+    @pipeline_component_parallel_group.setter
+    def pipeline_component_parallel_group(self, group):
+        """ Property sets the pipeline component parallel group.
+            Args:
+                group:  Pipeline component parallel group.
+        """
+        self._pipeline_component_parallel_group = group
 
     @property
     def data_parallel_rank(self):
