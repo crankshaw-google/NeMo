@@ -348,7 +348,7 @@ class LayerUnitTestStrategy(NLPDDPStrategy):
             assert "pipeline_model_parallel_group_size" in parallelization_specs[key]
             assert "micro_batch_size" in parallelization_specs[key]
 
-            assert parallelization_specs[key]["micro_batch_size"] == micro_batch_size \
+            assert parallelization_specs[key]["micro_batch_size"] == micro_batch_size, \
                 'micro_batch_size in parallelization_specs must match global micro_batch_size.'
 
         # make sure stimulus -> test -> response

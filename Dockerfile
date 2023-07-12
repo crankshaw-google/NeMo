@@ -104,7 +104,7 @@ RUN pip install nvidia-pyindex &&\
 RUN pip install --upgrade git+https://github.com/NVIDIA/TransformerEngine.git@stable
 
 ARG MEGATRON_VER=unknown
-RUN git clone https://github.com/crankshaw-google/Megatron-LM.git \
+RUN git clone https://github.com/gkroiz/Megatron-LM.git \
   && cd Megatron-LM \
   && git checkout $MEGATRON_VER \
   && pip install -e .
