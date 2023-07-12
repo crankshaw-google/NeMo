@@ -50,8 +50,11 @@ def main(cfg) -> None:
 
         plugins = []
 
+        logging.info(cfg.model.get("parallelization_specs", None))
+
         if cfg.model.get("parallelization_specs", None) is not None:
             logging.info("Using LayerUnitTestStrategy")
+            print("Using LayerUnitTestStrategy", flush=True)
             strategy = LayerUnitTestStrategy(
                 no_ddp_communication_hook=True,  # we don't use DDP for async grad allreduce
                 gradient_as_bucket_view=cfg.model.gradient_as_bucket_view,
@@ -61,6 +64,7 @@ def main(cfg) -> None:
             )
         else:
             logging.info("Using NLPDDPStrategy")
+            print("Using NLPDDPStrategy", flush=True)
             strategy = NLPDDPStrategy(
                 no_ddp_communication_hook=True,  # we don't use DDP for async grad allreduce
                 gradient_as_bucket_view=cfg.model.gradient_as_bucket_view,
