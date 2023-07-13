@@ -124,6 +124,7 @@ class ModelPT(LightningModule, Model):
         self._optimizer = None
         self._scheduler = None
         self.set_trainer(trainer)
+        self._microbatch_to_global_batch = 1
 
         self._save_restore_connector = SaveRestoreConnector()
 
@@ -1652,8 +1653,9 @@ class ModelPT(LightningModule, Model):
             We use it here to enable nsys profiling and dynamic freezing.
         """
 
+        global_batch_idx = batch_idx / _microbatch_to_global_batch
 
-        logging.info(f"Starting batch {batch_idx}")
+        logging.info(f"Starting batch {global_batch_idx}")
         sys.stdout.flush()
         sys.stderr.flush()
 
