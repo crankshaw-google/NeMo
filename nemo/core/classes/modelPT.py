@@ -1699,7 +1699,8 @@ class ModelPT(LightningModule, Model):
             We use it here to enable nsys profiling.
         """
 
-        logging.info(f"Finished batch {batch_idx}")
+        global_batch_idx = batch_idx / self._microbatch_to_global_batch
+        logging.info(f"Finished batch {global_batch_idx}")
         sys.stdout.flush()
         sys.stderr.flush()
 
