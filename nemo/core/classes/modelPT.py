@@ -1653,7 +1653,7 @@ class ModelPT(LightningModule, Model):
             We use it here to enable nsys profiling and dynamic freezing.
         """
 
-        global_batch_idx = batch_idx / _microbatch_to_global_batch
+        global_batch_idx = batch_idx / self._microbatch_to_global_batch
 
         logging.info(f"Starting batch {global_batch_idx}")
         sys.stdout.flush()
