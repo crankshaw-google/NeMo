@@ -328,7 +328,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
     self.initialize_ub = self.cfg.get('ub_tp_comm_overlap', False)
 
   def on_train_batch_start(self, batch, batch_idx):
-    super().on_train_batch_start(self, batch, batch_idx):
+    super().on_train_batch_start(self, batch, batch_idx)
     if self._pytorch_profiler is not None:
         self._pytorch_profiler.step()
 
