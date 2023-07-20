@@ -332,7 +332,7 @@ class LayerUnitTestStrategy(NLPDDPStrategy):
                 app_state.data_parallel_group = parallel_state.get_data_parallel_group()
                 app_state.data_parallel_rank = parallel_state.get_data_parallel_rank()
                 app_state.data_parallel_size = parallel_state.get_data_parallel_world_size()
-                app_state.pipeline_component_parallel_group = parallel_state.get_pipeline_component_parallel_group()
+                app_state.pipeline_component_parallel_group = parallel_state.get_pipeline_component_parallel_groups()
                 app_state.pipeline_model_parallel_group = parallel_state.get_pipeline_model_parallel_group()
 
     def check_parallelization_specs(self, parallelization_specs: dict, micro_batch_size: int) -> None:

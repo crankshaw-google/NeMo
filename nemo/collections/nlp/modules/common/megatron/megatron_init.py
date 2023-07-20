@@ -121,11 +121,17 @@ def initialize_model_parallel_for_nemo(
     # only run this if using LayerUnitTestStrategy
     if parallelization_specs:
         (
-            app_state.pipeline_component_parallel_rank
+            app_state.pipeline_model_parallel_rank,
+            app_state.pipeline_component_parallel_rank,
+            app_state.data_parallel_size,
         ) = fake_initialize_components_parallel(
             rank=global_rank,
             parallelization_specs=parallelization_specs,
         )
+
+        # override apex.transformer globals set from fake_initialize_model_parallel()
+        set_pipeline_model_parallel_rank(app_state.pipeline_model_parallel_rank)
+
 
         # update apex.transformer globals for pipeline parallel components
         component_name = None
@@ -337,25 +343,58 @@ def fake_initialize_components_parallel(
     Fake initialize model data parallel groups for the rank's component.
     """
 
-    component_name = None
-    for k in parallelization_specs:
-        if rank in parallelization_specs[k]["gpu_ranks"]:
-            component_name = k
-
-    # Get world size and rank. Ensure some consistencies.
-    component_world_size = len(parallelization_specs[component_name]["gpu_ranks"])
-    pipeline_model_parallel_group_size = min(parallelization_specs[component_name]["pipeline_model_parallel_group_size"], component_world_size)
-    num_pipeline_component_parallel_groups = component_world_size // pipeline_model_parallel_group_size
-    gpu_ranks = parallelization_specs[component_name]['gpu_ranks']
-
-    all_pipeline_component_parallel_group_ranks = []
+    pipeline_model_parallel_group = None
     pipeline_component_parallel_group = None
-    for i in range(num_pipeline_component_parallel_groups):
-        ranks = range(gpu_ranks[i], gpu_ranks[component_world_size-1]+1, num_pipeline_component_parallel_groups)
-        all_pipeline_component_parallel_group_ranks.append(list(ranks))
-        if rank in ranks:
-            pipeline_component_parallel_group = list(ranks)
-            logging.info(f'Rank {rank} has pipeline component parallel group: {pipeline_component_parallel_group}')
 
+    # find maximum number of pipeline parallel groups in any component,
+    # this number will be the total number of pipeline_model_parallel_groups
+    max_num_pipeline_parallel_groups = max(all_num_pipeline_components_parallel_groups.values())
+
+    # iterate through each pipeline_model_parallel_group
+    for pipeline_model_parallel_group_index in range(max_num_pipeline_parallel_groups):
+        # stores all ranks in pipeline_model_parallel_group
+        pipeline_model_parallel_ranks = []
+
+        # for each pipeline_parallel_group, iterate through each component
+        for component_index, k in enumerate(parallelization_specs):
+
+            # calculate pipeline_parallel_group_index within a component
+
+            # ratio between max number of pipeline_parallel_groups and
+            # number of pipeline_parallel_groups in this component
+            ratio = max_num_pipeline_parallel_groups / all_num_pipeline_components_parallel_groups[k]
+            component_tensor_model_parallel_group_size = parallelization_specs[k]['tensor_model_parallel_group_size']
+
+            if ratio == 1:
+                pipeline_component_parallel_group_index = pipeline_model_parallel_group_index
+            else:
+                pipeline_component_parallel_group_index = int(pipeline_model_parallel_group_index // (ratio * component_tensor_model_parallel_group_size) * ratio + pipeline_model_parallel_group_index % ratio)
+
+
+            # get ranks for pipeline_model_parallel_group within a component
+            component_ranks = range(
+                all_gpu_ranks[k][pipeline_component_parallel_group_index],
+                all_gpu_ranks[k][-1]+1,
+                all_num_pipeline_components_parallel_groups[k]
+            )
+            if rank in component_ranks:
+                pipeline_component_parallel_group = list(component_ranks)
+                logging.info(f'Rank {rank} has pipeline component parallel group: {pipeline_component_parallel_group}')
+
+        if rank in pipeline_model_parallel_ranks:
+            pipeline_model_parallel_group = pipeline_model_parallel_ranks
+            logging.info(f'Rank {rank} has pipeline model parallel group: {pipeline_model_parallel_group}')
+
+    pipeline_model_parallel_rank = pipeline_model_parallel_group.index(rank)
     pipeline_component_parallel_rank = pipeline_component_parallel_group.index(rank)
-    return pipeline_component_parallel_rank
+
+    data_parallel_size = sum(parallelization_specs[_]['data_parallel_group_size'] for _ in parallelization_specs)
+
+    logging.info(f'Rank {rank} has pipeline model parallel rank {pipeline_model_parallel_rank}')
+    logging.info(f'Rank {rank} has pipeline component parallel rank {pipeline_component_parallel_rank}')
+
+    return (
+        pipeline_model_parallel_rank,
+        pipeline_component_parallel_rank,
+        data_parallel_size,
+    )
