@@ -86,7 +86,7 @@ ARG MEGATRON_VER=unknown
 RUN git clone https://github.com/crankshaw-google/Megatron-LM.git \
   && cd Megatron-LM \
   && git checkout $MEGATRON_VER \
-  && pip install -e .
+  && pip install .
 
 
 # copy nemo source into a scratch image
