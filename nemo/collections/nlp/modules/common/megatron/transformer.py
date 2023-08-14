@@ -1121,10 +1121,10 @@ class ParallelTransformer(MegatronModule):
                     moe_dropout=moe_dropout,
                 )
 
-        # TODO: implement offset calculation for virtual pipeline model parallelism
-        assert parallel_state.get_virtual_pipeline_model_parallel_world_size() is None, (
-            'offset calculation has not been implmented with virtual pipeline model parallelism'
-        )
+        # # TODO: implement offset calculation for virtual pipeline model parallelism
+        # assert parallel_state.get_virtual_pipeline_model_parallel_world_size() is None, (
+        #     'offset calculation has not been implmented with virtual pipeline model parallelism'
+        # )
 
         if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
             assert num_layers % parallel_state.get_virtual_pipeline_model_parallel_world_size() == 0, (
