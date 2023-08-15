@@ -34,6 +34,9 @@ from nemo.utils.exp_manager import exp_manager
 
 mp.set_start_method("spawn", force=True)
 
+import utilities.monitor_collectives
+
+utilities.monitor_collectives.shunt_torch_communication()
 
 
 @hydra_runner(config_path="conf", config_name="megatron_gpt_config")
