@@ -51,6 +51,16 @@ def main(cfg) -> None:
   with torch.autograd.profiler.emit_nvtx():
     plugins = []
     if cfg.model.get('parallelization_specs', None) is not None:
+      ordered_parallelization_specs = {}
+      ordered_parallelization_specs["stimulus"] = cfg.model.get('parallelization_specs')["stimulus"]
+      ordered_parallelization_specs["test"] = cfg.model.get('parallelization_specs')["test"]
+      ordered_parallelization_specs["response"] = cfg.model.get('parallelization_specs')["response"]
+      
+      world_size = sum([len(cfg.model.get('parallelization_specs', None)[k]["gpu_ranks"]) for k in cfg.model.get('parallelization_specs', None)])
+      with open_dict(cfg):
+        cfg.model.parallelization_specs = ordered_parallelization_specs
+        cfg.model.world_size = world_size
+
       strategy = LayerUnitTestStrategy(
           no_ddp_communication_hook=True,  # we don't use DDP for async grad allreduce
           gradient_as_bucket_view=cfg.model.gradient_as_bucket_view,

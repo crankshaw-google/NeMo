@@ -49,6 +49,7 @@ class AppState(metaclass=Singleton):
         self._tensor_model_parallel_group = None
         self._pipeline_model_parallel_size = None
         self._virtual_pipeline_model_parallel_size = None
+        self._virtual_pipeline_component_parallel_size = None
         self._pipeline_model_parallel_group = None
         self._pipeline_model_parallel_split_rank = None
         self._is_megatron_initialized = False
@@ -190,6 +191,22 @@ class AppState(metaclass=Singleton):
         self._virtual_pipeline_model_parallel_size = size
 
     @property
+    def virtual_pipeline_component_parallel_size(self):
+        """ Property returns the number of GPUs in each component parallel group.
+            Returns:
+                Number of GPUs in each model parallel group.
+        """
+        return self._virtual_pipeline_component_parallel_size
+
+    @virtual_pipeline_component_parallel_size.setter
+    def virtual_pipeline_component_parallel_size(self, size):
+        """ Property sets the size of the virtual pipeline parallel component.
+            Args:
+                size (int):  Number of modules in each pipeline parallel component.
+        """
+        self._virtual_pipeline_commponent_parallel_size = size
+
+    @property
     def data_parallel_size(self):
         """ Property returns the number of GPUs in each data parallel group.
             Returns:
@@ -316,6 +333,22 @@ class AppState(metaclass=Singleton):
                 rank (int):  Virtual pipeline parallel rank.
         """
         self._virtual_pipeline_model_parallel_rank = rank
+
+    @property
+    def virtual_pipeline_component_parallel_rank(self):
+        """ Property returns the virtual pipeline parallel rank.
+            Returns:
+                Model parallel rank.
+        """
+        return self._virtual_pipeline_component_parallel_rank
+
+    @virtual_pipeline_component_parallel_rank.setter
+    def virtual_pipeline_component_parallel_rank(self, rank):
+        """ Property sets the virtual pipeline parallel rank.
+            Args:
+                rank (int):  Virtual pipeline parallel rank.
+        """
+        self._virtual_pipeline_component_parallel_rank = rank
 
     @property
     def pipeline_model_parallel_split_rank(self):

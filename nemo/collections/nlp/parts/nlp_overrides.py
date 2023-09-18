@@ -266,6 +266,7 @@ class LayerUnitTestStrategy(NLPDDPStrategy):
         super().__init__(parallel_devices, cluster_environment, checkpoint_io, **kwargs)
         parallelization_specs = self.check_parallelization_specs(parallelization_specs, micro_batch_size)
         self.parallelization_specs = parallelization_specs
+        self.micro_batch_size = micro_batch_size
 
     def configure_ddp(self):
         """ Override LightningModule ddp if using model parallel.
@@ -321,6 +322,7 @@ class LayerUnitTestStrategy(NLPDDPStrategy):
             if torch.distributed.is_initialized():
                 parallel_state.initialize_model_components_parallel(
                     parallelization_specs=self.parallelization_specs,
+                    micro_batch_size=self.micro_batch_size,
                     pipeline_model_parallel_split_rank=app_state.pipeline_model_parallel_split_rank,
                     use_fp8=app_state.use_fp8,
                 )
@@ -334,14 +336,18 @@ class LayerUnitTestStrategy(NLPDDPStrategy):
                 app_state.data_parallel_group = parallel_state.get_data_parallel_group()
                 app_state.data_parallel_rank = parallel_state.get_data_parallel_rank()
                 app_state.data_parallel_size = parallel_state.get_data_parallel_world_size()
-                app_state.pipeline_component_parallel_group = parallel_state.get_pipeline_component_parallel_groups()
                 app_state.pipeline_model_parallel_group = parallel_state.get_pipeline_model_parallel_group()
 
     def check_parallelization_specs(self, parallelization_specs: dict, micro_batch_size: int) -> None:
+        
+        # currently do not support more than 3 components
+        assert len(parallelization_specs) == 3
+        
+        # check all appropriate keys are in parallelization_specs
         assert "stimulus" in parallelization_specs
         assert "test" in parallelization_specs
         assert "response" in parallelization_specs
-
+        
         for key in parallelization_specs:
             assert "layers" in parallelization_specs[key]
             assert "gpu_ranks" in parallelization_specs[key]
@@ -349,18 +355,46 @@ class LayerUnitTestStrategy(NLPDDPStrategy):
             assert "data_parallel_group_size" in parallelization_specs[key]
             assert "tensor_model_parallel_group_size" in parallelization_specs[key]
             assert "pipeline_model_parallel_group_size" in parallelization_specs[key]
-            assert "micro_batch_size" in parallelization_specs[key]
-
-            assert parallelization_specs[key]["micro_batch_size"] == micro_batch_size, \
-                'micro_batch_size in parallelization_specs must match global micro_batch_size.'
 
         # make sure stimulus -> test -> response
-        ordered_parallelization_specs = {}
-        ordered_parallelization_specs["stimulus"] = parallelization_specs["stimulus"]
-        ordered_parallelization_specs["test"] = parallelization_specs["test"]
-        ordered_parallelization_specs["response"] = parallelization_specs["response"]
+        assert list(parallelization_specs.keys()) == ["stimulus", "test", "response"]
+        
+        # make sure tensor_model_parallel_group_size is constant across components
+        assert parallelization_specs["stimulus"]["tensor_model_parallel_group_size"] == \
+            parallelization_specs["test"]["tensor_model_parallel_group_size"] == \
+            parallelization_specs["response"]["tensor_model_parallel_group_size"], \
+            "non-uniform tensor parallelism is not yet supported"
 
-        return ordered_parallelization_specs
+        if (parallelization_specs["test"]["data_parallel_group_size"] != \
+            parallelization_specs["stimulus"]["data_parallel_group_size"]) or ( \
+            parallelization_specs["test"]["data_parallel_group_size"] != \
+            parallelization_specs["response"]["data_parallel_group_size"]):
+            print('Warning, non-uniform data parallelism is extremly experimental and most likely has bugs!')
+
+
+        # make sure either there is no interleaving or each component has interleaving
+        # TODO (gersonkroiz): implement some components with interleaving
+        use_interleaving = False
+        
+        use_interleaving = {}
+        for k in parallelization_specs:
+            if "virtual_pipeline_model_parallel_size" in parallelization_specs[k]:
+                if parallelization_specs[k]["virtual_pipeline_model_parallel_size"] != None:
+                    assert parallelization_specs[k]["virtual_pipeline_model_parallel_size"] > 1, \
+                        "virtual_pipeline_model_parallel_size must be > 1"
+                    use_interleaving[k] = parallelization_specs[k]["virtual_pipeline_model_parallel_size"]
+
+        assert len(use_interleaving) == 0 or len(use_interleaving) == 3, \
+            "LayerUnitTestStratey only supports interleaving for all components or no components"
+
+        if (parallelization_specs["test"]["virtual_pipeline_model_parallel_size"] != \
+            parallelization_specs["stimulus"]["virtual_pipeline_model_parallel_size"]) or ( \
+            parallelization_specs["test"]["virtual_pipeline_model_parallel_size"] != \
+            parallelization_specs["response"]["virtual_pipeline_model_parallel_size"]):
+            print('Warning, non-uniform virtual pipeline parallelism is extremly experimental and most likely has bugs!')
+
+        # all initial checks passed!
+        return parallelization_specs
 
 
 class NLPSaveRestoreConnector(SaveRestoreConnector):

@@ -675,6 +675,9 @@ def _build_index_mappings(
     torch.distributed.barrier()
     counts = torch.cuda.LongTensor([1])
     torch.distributed.all_reduce(counts, group=parallel_state.get_data_parallel_group())
+    # NOTE: even if there are multiple pipeline model parallel 
+    # (which can happen with non-uniform data parallelism), the first one can be used
+    # since they will all have the same size, so the counts will reduce to the same value
     torch.distributed.all_reduce(counts, group=parallel_state.get_pipeline_model_parallel_group())
     assert counts[0].item() == (
         torch.distributed.get_world_size()

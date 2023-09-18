@@ -222,17 +222,29 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                 wrap_with_ddp=False,
                 on_cpu=True,
                 virtual_pipeline_model_parallel_size=self.cfg.get('virtual_pipeline_model_parallel_size', None),
+                parallelization_specs=self.cfg.get('parallelization_specs', None)
             )
         else:
             self.model = build_model(
                 model_provider_func=self.model_provider_func,
                 wrap_with_ddp=False,
                 virtual_pipeline_model_parallel_size=self.cfg.get('virtual_pipeline_model_parallel_size', None),
+                parallelization_specs=self.cfg.get('parallelization_specs', None)
             )
 
         # if we're not using interleaved, then self.model is a module.
-        if self.cfg.get('virtual_pipeline_model_parallel_size', None) is None:
-            self.model = self.model[0]
+        if self.cfg.get('parallelization_specs', None) is not None:
+            parallelization_specs = self.cfg.get('parallelization_specs', None)
+            no_virtual_pipeline_parallel_size = True
+            for k in parallelization_specs:
+                if 'virtual_pipeline_model_parallel_size' in parallelization_specs[k] and \
+                    parallelization_specs[k]['virtual_pipeline_model_parallel_size'] != None:
+                    no_virtual_pipeline_parallel_size = False
+            if no_virtual_pipeline_parallel_size:
+                self.model = self.model[0]
+        else:
+            if self.cfg.get('virtual_pipeline_model_parallel_size', None) is None:
+                self.model = self.model[0]
 
         if self.megatron_amp_o2:
 
@@ -447,7 +459,13 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         return output_tensor
 
     def fwd_bwd_step(self, dataloader_iter, batch_idx, forward_only):
-        tensor_shape = [self.cfg.encoder_seq_length, self.cfg.micro_batch_size, self.cfg.hidden_size]
+        # specific for LayerUnitTestStrategy, adjust micro_batch_size based on the rank's component's micro_batch_size.
+        if self.cfg.get('parallelization_specs', None) is not None:
+            # TODO (gersonkroiz): fix this for non-uniform data parallelism
+            tensor_shape = [self.cfg.encoder_seq_length, self.cfg.micro_batch_size, self.cfg.hidden_size]
+            # tensor_shape = [self.cfg.encoder_seq_length, None, self.cfg.hidden_size]
+        else:
+            tensor_shape = [self.cfg.encoder_seq_length, self.cfg.micro_batch_size, self.cfg.hidden_size]
 
         # handle asynchronous grad reduction
         no_sync_func = None
@@ -1071,10 +1089,16 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
             if parallel_state.get_pipeline_model_parallel_world_size() > 1:
                 if isinstance(self.model, list):
                     for i, module in enumerate(self.model):
-                        parallel_state.set_virtual_pipeline_model_parallel_rank(i)
+                        if self.cfg.get('parallelization_specs', None) is not None:
+                            parallel_state.set_virtual_pipeline_component_parallel_rank(i)
+                        else:
+                            parallel_state.set_virtual_pipeline_model_parallel_rank(i)
                         if self.cfg.get('share_embeddings_and_output_weights', True):
                             module.sync_initial_word_embeddings()
-                    parallel_state.set_virtual_pipeline_model_parallel_rank(0)
+                    if self.cfg.get('parallelization_specs', None) is not None:
+                        parallel_state.set_virtual_pipeline_component_parallel_rank(0)
+                    else:
+                        parallel_state.set_virtual_pipeline_model_parallel_rank(0)
                 else:
                     if self.cfg.get('share_embeddings_and_output_weights', True):
                         self.model.sync_initial_word_embeddings()

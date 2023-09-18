@@ -612,7 +612,9 @@ class MegatronBaseModel(NLPModel):
 
         # to be summed across data parallel group
         total_num_parameters = torch.tensor(num_parameters_on_device).cuda()
-
+        # since a rank can be in multiple model parallel groups (with non-uniform data parallelism),
+        # this is set to all_reduce in the first model parallel group
+        # all total_num_parameters should be the same regardless of which model parallel group is used
         torch.distributed.all_reduce(total_num_parameters, group=parallel_state.get_model_parallel_group())
 
         return num_parameters_on_device, total_num_parameters

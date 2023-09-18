@@ -1121,10 +1121,6 @@ class ParallelTransformer(MegatronModule):
                     moe_dropout=moe_dropout,
                 )
 
-        # TODO: implement offset calculation for virtual pipeline model parallelism
-        assert parallel_state.get_virtual_pipeline_model_parallel_world_size() is None, (
-            'offset calculation has not been implmented with virtual pipeline model parallelism'
-        )
 
         if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
             assert num_layers % parallel_state.get_virtual_pipeline_model_parallel_world_size() == 0, (
@@ -1144,14 +1140,18 @@ class ParallelTransformer(MegatronModule):
             # layers to stages like (each list is a model chunk):
             # Stage 0: [0, 1]  [4, 5]
             # Stage 1: [2, 3]  [6, 7]
-            if parallelization_specs:
-                pipeline_parallel_rank = parallel_state.get_pipeline_component_parallel_rank()
-            else:
-                pipeline_parallel_rank = parallel_state.get_pipeline_model_rank()
-
             offset = parallel_state.get_virtual_pipeline_model_parallel_rank() * (
                 num_layers // parallel_state.get_virtual_pipeline_model_parallel_world_size()
-            ) + (pipeline_parallel_rank * self.num_layers)
+            ) + (parallel_state.get_pipeline_model_parallel_rank() * self.num_layers)
+        # check for virtual pipeline component parallel world size
+        elif parallel_state.get_virtual_pipeline_component_parallel_world_size() is not None:
+            assert parallel_state.get_num_component_layers() % parallel_state.get_virtual_pipeline_component_parallel_world_size() == 0, (
+                'num_layers_per_stage must be divisible by ' 'virtual_pipeline_component_parallel_size'
+            )
+            self.num_layers = self.num_layers // parallel_state.get_virtual_pipeline_component_parallel_world_size()
+            offset = parallel_state.get_virtual_pipeline_component_parallel_rank() * (
+                parallel_state.get_num_component_layers() // parallel_state.get_virtual_pipeline_component_parallel_world_size()
+            ) + self.get_layer_unit_test_strategy_offset(parallel_state.get_pipeline_model_parallel_rank())
         else:
             # Each stage gets a contiguous set of layers.
             if (
@@ -1174,8 +1174,11 @@ class ParallelTransformer(MegatronModule):
                     offset = parallel_state.get_pipeline_model_parallel_rank() * self.num_layers
 
         # TODO TODO TODO(crankshaw): This is where the layers for a specific device get built
+        # for debugging purposes
+        import os
+        rank = int(os.getenv('RANK', '0'))
         for i in range(self.num_layers):
-            print(f'built layers {i + 1 + offset}')
+            print(f'rank {rank} | built layers {i + 1 + offset}')
         self.layers = torch.nn.ModuleList([build_layer(i + 1 + offset) for i in range(self.num_layers)])
 
         if self.post_process and self.transformer_block_type != 'post_ln':
@@ -1262,6 +1265,14 @@ class ParallelTransformer(MegatronModule):
             for gpu_ranks 32-39, the offset is 10
 
         """
+        component_beginning_pipeline_model_rank = 0
+        # find which number of pipeline model ranks before the component that pipeline_model_rank is in
+        for i, k in enumerate(self.parallelization_specs):
+            if i != 0:
+                previous_component_pipeline_model_parallel_group_size = list(self.parallelization_specs.values())[i-1]['pipeline_model_parallel_group_size']
+                if pipeline_model_rank > component_beginning_pipeline_model_rank + previous_component_pipeline_model_parallel_group_size - 1:
+                    component_beginning_pipeline_model_rank += previous_component_pipeline_model_parallel_group_size
+
         offset = 0
         pipeline_model_rank_tracker = 0
         component_tracker = 0
@@ -1274,9 +1285,19 @@ class ParallelTransformer(MegatronModule):
             assert (
                         component_num_layers % pipeline_component_parallel_group_size == 0
                     ), 'component_num_layers must be divisible by pipeline_component_parallel_group_size'
+            # iterate through each pipeline parallel rank of the component
             for pipeline_component_parallel_group_rank in range(pipeline_component_parallel_group_size):
+                # add offset if not yet reached pipeline_model_rank
                 if pipeline_model_rank_tracker < pipeline_model_rank:
-                    offset += component_num_layers // pipeline_component_parallel_group_size
+                    if ('virtual_pipeline_model_parallel_size' in self.parallelization_specs[component_name]) \
+                        and (self.parallelization_specs[component_name]['virtual_pipeline_model_parallel_size'] != None):
+                        # can ignore virtual pipeline component parallel world size if not in the same compoennt as component with pipeline_model_rank
+                        if pipeline_model_rank_tracker < component_beginning_pipeline_model_rank:
+                            offset += component_num_layers // pipeline_component_parallel_group_size
+                        else:   
+                            offset += component_num_layers // pipeline_component_parallel_group_size // self.parallelization_specs[component_name]['virtual_pipeline_model_parallel_size']
+                    else:
+                        offset += component_num_layers // pipeline_component_parallel_group_size
                 pipeline_model_rank_tracker += 1
             component_tracker += 1
 

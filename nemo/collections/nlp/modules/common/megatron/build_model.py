@@ -46,6 +46,7 @@ def build_model(
     model_provider_func: Callable[[Any, Dict[str, Any]], torch.nn.Module],
     wrap_with_ddp: bool = True,
     virtual_pipeline_model_parallel_size: Optional[int] = None,
+    parallelization_specs: Dict[str, Any] = None,
     model_type: ModelType = ModelType.encoder_or_decoder,
     on_cpu: bool = False,
     *args: Any,
@@ -69,7 +70,30 @@ def build_model(
     if model_type is None:
         model_type = ModelType.encoder_or_decoder
 
-    if (
+    if parallelization_specs:
+        assert model_type != ModelType.encoder_and_decoder, \
+            "LayerUnitTestStrategy currently does not support models with both encoder and decoder"
+        model = []
+        if parallel_state.get_virtual_pipeline_component_parallel_world_size() != None and parallel_state.get_pipeline_component_parallel_world_size() > 1:
+            for i in range(parallel_state.get_virtual_pipeline_component_parallel_world_size()):
+                parallel_state.set_virtual_pipeline_component_parallel_rank(i)
+                model.append(
+                    model_provider_func(
+                        *args,
+                        **kwargs,
+                        pre_process=parallel_state.is_pipeline_first_stage(),
+                        post_process=parallel_state.is_pipeline_last_stage(),
+                    )
+                )
+        else:
+            model = model_provider_func(
+                *args,
+                **kwargs,
+                pre_process=parallel_state.is_pipeline_first_stage(),
+                post_process=parallel_state.is_pipeline_last_stage(),
+            )
+            
+    elif (
         parallel_state.get_pipeline_model_parallel_world_size() > 1
         and virtual_pipeline_model_parallel_size is not None
     ):

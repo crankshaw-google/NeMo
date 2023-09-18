@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import random
+import math
 
 import numpy as np
 import torch
@@ -39,9 +40,12 @@ try:
         set_tensor_model_parallel_rank,
         set_tensor_model_parallel_world_size,
         set_virtual_pipeline_model_parallel_rank,
+        set_virtual_pipeline_component_parallel_rank,
+        set_virtual_pipeline_component_parallel_world_size,
         set_pipeline_component_parallel_rank,
         set_pipeline_component_parallel_world_size,
         set_num_component_layers,
+        set_using_layer_unit_test_strategy,
     )
 
 except (ImportError, ModuleNotFoundError):
@@ -89,51 +93,28 @@ def initialize_model_parallel_for_nemo(
     app_state.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
     app_state.use_fp8 = use_fp8
     app_state.init_mpi_proc_group = init_mpi_proc_group
-    (
-        app_state.tensor_model_parallel_rank,
-        app_state.pipeline_model_parallel_rank,
-        app_state.model_parallel_size,
-        app_state.data_parallel_size,
-        app_state.pipeline_model_parallel_split_rank,
-        app_state.virtual_pipeline_model_parallel_rank,
-    ) = fake_initialize_model_parallel(
-        world_size=world_size,
-        rank=global_rank,
-        tensor_model_parallel_size_=tensor_model_parallel_size,
-        pipeline_model_parallel_size_=pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size_=virtual_pipeline_model_parallel_size,
-        pipeline_model_parallel_split_rank_=pipeline_model_parallel_split_rank,
-    )
-
-    # update apex.transformer globals
-    set_tensor_model_parallel_world_size(app_state.tensor_model_parallel_size)
-    set_tensor_model_parallel_rank(app_state.tensor_model_parallel_rank)
-
-    set_pipeline_model_parallel_rank(app_state.pipeline_model_parallel_rank)
-    if HAVE_INTERLEAVED:
-        set_virtual_pipeline_model_parallel_world_size(app_state.virtual_pipeline_model_parallel_size)
-    set_virtual_pipeline_model_parallel_rank(app_state.virtual_pipeline_model_parallel_rank)
-    set_pipeline_model_parallel_world_size(app_state.pipeline_model_parallel_size)
-    set_pipeline_model_parallel_split_rank(app_state.pipeline_model_parallel_split_rank)
-
-    _set_random_seed(seed)
 
     # only run this if using LayerUnitTestStrategy
     if parallelization_specs:
+        set_using_layer_unit_test_strategy(True)
         (
+            app_state.tensor_model_parallel_rank,
             app_state.pipeline_model_parallel_rank,
             app_state.pipeline_component_parallel_rank,
+            app_state.model_parallel_size,
             app_state.data_parallel_size,
+            app_state.pipeline_model_parallel_split_rank,
+            app_state.virtual_pipeline_model_parallel_rank,
+            app_state.virtual_pipeline_component_parallel_rank,
+            virtual_pipeline_component_parallel_size,
         ) = fake_initialize_components_parallel(
             rank=global_rank,
             parallelization_specs=parallelization_specs,
+            virtual_pipeline_model_parallel_size_=virtual_pipeline_model_parallel_size,
+            pipeline_model_parallel_split_rank_=pipeline_model_parallel_split_rank,
         )
 
-        # override apex.transformer globals set from fake_initialize_model_parallel()
-        set_pipeline_model_parallel_rank(app_state.pipeline_model_parallel_rank)
-
-
-        # update apex.transformer globals for pipeline parallel components
+        # update apex.transformer globals
         component_name = None
         for k in parallelization_specs:
             if global_rank in parallelization_specs[k]["gpu_ranks"]:
@@ -142,6 +123,47 @@ def initialize_model_parallel_for_nemo(
         set_pipeline_component_parallel_rank(app_state.pipeline_component_parallel_rank)
         set_pipeline_component_parallel_world_size(parallelization_specs[component_name]["pipeline_model_parallel_group_size"])
         set_num_component_layers(len(parallelization_specs[component_name]["layers"]))
+        set_tensor_model_parallel_world_size(app_state.tensor_model_parallel_size)
+        set_tensor_model_parallel_rank(app_state.tensor_model_parallel_rank)
+        set_pipeline_model_parallel_rank(app_state.pipeline_model_parallel_rank)
+        if HAVE_INTERLEAVED:
+            set_virtual_pipeline_model_parallel_world_size(app_state.virtual_pipeline_model_parallel_size)
+            set_virtual_pipeline_component_parallel_world_size(virtual_pipeline_component_parallel_size)
+        set_virtual_pipeline_model_parallel_rank(app_state.virtual_pipeline_model_parallel_rank)
+        set_virtual_pipeline_component_parallel_rank(app_state.virtual_pipeline_component_parallel_rank)
+        set_pipeline_model_parallel_world_size(app_state.pipeline_model_parallel_size)
+        set_pipeline_model_parallel_split_rank(app_state.pipeline_model_parallel_split_rank)
+
+    else:
+        set_using_layer_unit_test_strategy(False)
+        (
+            app_state.tensor_model_parallel_rank,
+            app_state.pipeline_model_parallel_rank,
+            app_state.model_parallel_size,
+            app_state.data_parallel_size,
+            app_state.pipeline_model_parallel_split_rank,
+            app_state.virtual_pipeline_model_parallel_rank,
+        ) = fake_initialize_model_parallel(
+            world_size=world_size,
+            rank=global_rank,
+            tensor_model_parallel_size_=tensor_model_parallel_size,
+            pipeline_model_parallel_size_=pipeline_model_parallel_size,
+            virtual_pipeline_model_parallel_size_=virtual_pipeline_model_parallel_size,
+            pipeline_model_parallel_split_rank_=pipeline_model_parallel_split_rank,
+        )
+
+        # update apex.transformer globals
+        set_tensor_model_parallel_world_size(app_state.tensor_model_parallel_size)
+        set_tensor_model_parallel_rank(app_state.tensor_model_parallel_rank)
+        set_pipeline_model_parallel_rank(app_state.pipeline_model_parallel_rank)
+        if HAVE_INTERLEAVED:
+            set_virtual_pipeline_model_parallel_world_size(app_state.virtual_pipeline_model_parallel_size)
+        set_virtual_pipeline_model_parallel_rank(app_state.virtual_pipeline_model_parallel_rank)
+        set_pipeline_model_parallel_world_size(app_state.pipeline_model_parallel_size)
+        set_pipeline_model_parallel_split_rank(app_state.pipeline_model_parallel_split_rank)
+
+    _set_random_seed(seed)
+
 
     if global_batch_size and micro_batch_size is not None:
         # TODO: add rampup_batch_size here when we have it implemented
@@ -156,6 +178,8 @@ def initialize_model_parallel_for_nemo(
                 rampup_batch_size=rampup_batch_size,
             )
         else:
+            # TODO (gersonkroiz): implement when _GLOBAL_NUM_MICROBATCHES_CALCULATOR is already initialized
+            raise ValueError('Not yet implemented')
             if isinstance(_GLOBAL_NUM_MICROBATCHES_CALCULATOR, ConstantNumMicroBatches):
                 assert _GLOBAL_NUM_MICROBATCHES_CALCULATOR.current_global_batch_size == global_batch_size
                 assert _GLOBAL_NUM_MICROBATCHES_CALCULATOR.micro_batch_size == micro_batch_size
@@ -252,6 +276,7 @@ def fake_initialize_model_parallel(
 
     # Build the data-parallel groups.
     all_data_parallel_group_ranks = []
+    data_parallel_group = []
     for i in range(pipeline_model_parallel_size):
         start_rank = i * num_pipeline_model_parallel_groups
         end_rank = (i + 1) * num_pipeline_model_parallel_groups
@@ -338,63 +363,193 @@ def fake_initialize_model_parallel(
 def fake_initialize_components_parallel(
     rank,
     parallelization_specs,
+    pipeline_model_parallel_split_rank_=None,
+    virtual_pipeline_model_parallel_size_=None,
 ):
     """
     Fake initialize model data parallel groups for the rank's component.
     """
+    # setup
+    world_sizes = {}
+    tensor_model_parallel_group_sizes = {}
+    data_parallel_group_sizes = {}
+    pipeline_components_parallel_group_sizes = {}
+    virtual_pipeline_components_parallel_group_sizes = {}
 
-    pipeline_model_parallel_group = None
-    pipeline_component_parallel_group = None
+    all_num_tensor_model_parallel_groups = {}
+    all_num_pipeline_components_parallel_groups = {}
+    all_num_data_parallel_groups = {}
 
-    # find maximum number of pipeline parallel groups in any component,
-    # this number will be the total number of pipeline_model_parallel_groups
-    max_num_pipeline_parallel_groups = max(all_num_pipeline_components_parallel_groups.values())
+    all_data_parallel_group_ranks = {}
+    all_gpu_ranks = {}
 
-    # iterate through each pipeline_model_parallel_group
-    for pipeline_model_parallel_group_index in range(max_num_pipeline_parallel_groups):
-        # stores all ranks in pipeline_model_parallel_group
-        pipeline_model_parallel_ranks = []
+    for k in parallelization_specs:
+        world_sizes[k] = len(parallelization_specs[k]["gpu_ranks"])
+        tensor_model_parallel_group_sizes[k] = parallelization_specs[k]["tensor_model_parallel_group_size"]
+        data_parallel_group_sizes[k] = parallelization_specs[k]["data_parallel_group_size"]
+        pipeline_components_parallel_group_sizes[k] = parallelization_specs[k]["pipeline_model_parallel_group_size"]
+        if "virtual_pipeline_model_parallel_size" in  parallelization_specs[k]:
+            virtual_pipeline_components_parallel_group_sizes[k] = parallelization_specs[k]["virtual_pipeline_model_parallel_size"]
+        else:
+             virtual_pipeline_components_parallel_group_sizes[k] = None
+        all_num_tensor_model_parallel_groups[k] = world_sizes[k] // tensor_model_parallel_group_sizes[k]
+        all_num_pipeline_components_parallel_groups[k] = world_sizes[k] // pipeline_components_parallel_group_sizes[k]
+        all_num_data_parallel_groups[k] = world_sizes[k] // data_parallel_group_sizes[k]
+        
+        all_data_parallel_group_ranks[k] = []
+        all_gpu_ranks[k] = parallelization_specs[k]['gpu_ranks']
 
-        # for each pipeline_parallel_group, iterate through each component
-        for component_index, k in enumerate(parallelization_specs):
 
-            # calculate pipeline_parallel_group_index within a component
+    first_component_name = list(parallelization_specs.keys())[0]
+    last_component_name = list(parallelization_specs.keys())[-1]
 
-            # ratio between max number of pipeline_parallel_groups and
-            # number of pipeline_parallel_groups in this component
-            ratio = max_num_pipeline_parallel_groups / all_num_pipeline_components_parallel_groups[k]
-            component_tensor_model_parallel_group_size = parallelization_specs[k]['tensor_model_parallel_group_size']
+    pipeline_model_parallel_size = sum(pipeline_components_parallel_group_sizes[k] for k in parallelization_specs)
+    model_parallel_size = tensor_model_parallel_group_sizes[first_component_name] * pipeline_model_parallel_size
 
-            if ratio == 1:
-                pipeline_component_parallel_group_index = pipeline_model_parallel_group_index
+    virtual_pipeline_model_parallel_rank = None
+    if virtual_pipeline_model_parallel_size_ is not None:
+        virtual_pipeline_model_parallel_rank = 0
+
+    virtual_pipeline_component_parallel_rank = None
+    virtual_pipeline_component_parallel_size = None
+    for k in parallelization_specs:
+        if virtual_pipeline_components_parallel_group_sizes[k] != None and rank in all_gpu_ranks[k]:
+            virtual_pipeline_component_parallel_size = virtual_pipeline_components_parallel_group_sizes[k]
+            virtual_pipeline_component_parallel_rank = 0
+
+    # Build the data parallel groups.
+    for k in parallelization_specs:
+        for i in range(pipeline_components_parallel_group_sizes[k]):
+            start_rank = i * all_num_pipeline_components_parallel_groups[k]
+            end_rank = (i + 1) * all_num_pipeline_components_parallel_groups[k]
+            for j in range(tensor_model_parallel_group_sizes[k]):
+                ranks = range(all_gpu_ranks[k][start_rank + j], all_gpu_ranks[k][end_rank-1]+1, tensor_model_parallel_group_sizes[k])
+                all_data_parallel_group_ranks[k].append(list(ranks))
+
+    # Build the tensor model-parallel groups.
+    all_tensor_model_parallel_group_ranks = []
+    tensor_model_parallel_group = None
+    for k in parallelization_specs:
+        for i in range(all_num_tensor_model_parallel_groups[k]):
+            ranks = range(all_gpu_ranks[k][i * tensor_model_parallel_group_sizes[k]],
+                          all_gpu_ranks[k][((i + 1) * tensor_model_parallel_group_sizes[k])-1]+1)
+            if rank in ranks:
+               tensor_model_parallel_group = list(ranks)
+               logging.info(f'Rank {rank} has tensor model parallel group: {tensor_model_parallel_group}')
+
+    tensor_model_parallel_rank = tensor_model_parallel_group.index(rank)
+
+    logging.info(f'All tensor model parallel group ranks: {all_tensor_model_parallel_group_ranks}')
+    logging.info(f'Rank {rank} has tensor model parallel rank: {tensor_model_parallel_rank}')
+
+    list_all_num_pipeline_components_parallel_groups = list(all_num_pipeline_components_parallel_groups.values())
+
+    # dict that stores all node to node pipeline parallel mappings
+    mappings = {}
+
+    # iterate through each pipeline component parallel group
+    for i, k in enumerate(all_num_pipeline_components_parallel_groups):
+
+        # iterate through each rank
+        for gpu_rank in all_gpu_ranks[k]:
+            print('gpu_rank: ', gpu_rank)
+            mappings[str(gpu_rank)] = []
+            # gpu_rank mapping is within component
+            if (gpu_rank + all_num_pipeline_components_parallel_groups[k]) in all_gpu_ranks[k]:
+                mappings[str(gpu_rank)].append((gpu_rank + all_num_pipeline_components_parallel_groups[k], 1))
+            # gpu_rank mapping is in the next component
             else:
-                pipeline_component_parallel_group_index = int(pipeline_model_parallel_group_index // (ratio * component_tensor_model_parallel_group_size) * ratio + pipeline_model_parallel_group_index % ratio)
+
+                # find the index within the respective data parallel group
+                data_parallel_group_index = None
+                for data_parallel_group_ranks in all_data_parallel_group_ranks[k]:
+                    if gpu_rank in data_parallel_group_ranks:
+                        data_parallel_group_index = data_parallel_group_ranks.index(gpu_rank)
+
+                assert data_parallel_group_index is not None
+                tensor_parallel_group_index = gpu_rank % tensor_model_parallel_group_sizes[k]
+
+                if k != last_component_name:
+                    # step 1 (define the bucket)
+                    ratio = list_all_num_pipeline_components_parallel_groups[i+1] / list_all_num_pipeline_components_parallel_groups[i]
+                    start = ((data_parallel_group_index)) * ratio
+                    end = ((data_parallel_group_index+1)) * ratio
+
+                    # step 2 (redefine bucket)
+                    floor_start = int(math.floor((data_parallel_group_index) * ratio))
+                    ceil_end = int(math.ceil(((data_parallel_group_index+1)) * ratio))
+
+                    # steps 3 (define compoennt groups within redefined bucket)
+                    for node in range(floor_start, ceil_end):
+
+                        # since this is fake intialization, the data_split_ratio is irrelevant
+                        new_node = (
+                            list(all_data_parallel_group_ranks.values())[i+1][tensor_parallel_group_index][node],
+                            -1
+                        )
+
+                        mappings[str(gpu_rank)].append(new_node)
+
+    # dfs to create pipeline model and component paralel ranks
+    visited_paths = {}
+
+    pipeline_model_parallel_group = []
+
+    def pipeline_parallelism_setup(curr_rank):
+
+        # check if dfs have reached end of pipeline_model_parallel_group
+        if len(mappings[str(curr_rank)]) == 0:
+            # initialize pipeline_model_parallel_group_here
+            if rank in pipeline_model_parallel_ranks:
+                pipeline_model_parallel_group.append(pipeline_model_parallel_ranks.copy())
 
 
-            # get ranks for pipeline_model_parallel_group within a component
-            component_ranks = range(
-                all_gpu_ranks[k][pipeline_component_parallel_group_index],
-                all_gpu_ranks[k][-1]+1,
-                all_num_pipeline_components_parallel_groups[k]
-            )
-            if rank in component_ranks:
-                pipeline_component_parallel_group = list(component_ranks)
-                logging.info(f'Rank {rank} has pipeline component parallel group: {pipeline_component_parallel_group}')
+        # add current path to visited_paths
+        visited_paths[str(list(pipeline_model_parallel_ranks))] = ''
+        # visit all possible mappings in a depth-first search manner if not already visited
+        for next_rank, _ in mappings[str(curr_rank)]:
+            pipeline_model_parallel_ranks.append(next_rank)
+            if str(list(pipeline_model_parallel_ranks)) not in visited_paths:
+                pipeline_parallelism_setup(next_rank)
+            pipeline_model_parallel_ranks.pop()
 
-        if rank in pipeline_model_parallel_ranks:
-            pipeline_model_parallel_group = pipeline_model_parallel_ranks
-            logging.info(f'Rank {rank} has pipeline model parallel group: {pipeline_model_parallel_group}')
 
-    pipeline_model_parallel_rank = pipeline_model_parallel_group.index(rank)
+    # iterate through all starting ranks
+    start_rank = 0
+    while start_rank < (data_parallel_group_sizes[first_component_name] * tensor_model_parallel_group_sizes[first_component_name]):
+        pipeline_model_parallel_ranks = [start_rank]
+        pipeline_parallelism_setup(start_rank)
+        start_rank += 1
+
+    # components will always be the same, regardless of the number of different pipeline model parallel groups for a specific rank
+    pipeline_component_parallel_group = []
+    for component_rank in pipeline_model_parallel_group[0]:
+        for k in parallelization_specs:
+            if rank in all_gpu_ranks[k] and component_rank in all_gpu_ranks[k]:
+                pipeline_component_parallel_group.append(component_rank)
+
+    for group in pipeline_model_parallel_group:
+        if rank in group:
+            pipeline_model_parallel_rank = group.index(rank)
+        
     pipeline_component_parallel_rank = pipeline_component_parallel_group.index(rank)
 
-    data_parallel_size = sum(parallelization_specs[_]['data_parallel_group_size'] for _ in parallelization_specs)
+    # used for num_microbatch_calculator calculator
+    # we only need the first component's data parallel group size since the num_microbatches can be adjusted based on fan-in/fan-out
+    data_parallel_size = parallelization_specs[first_component_name]['data_parallel_group_size']
 
     logging.info(f'Rank {rank} has pipeline model parallel rank {pipeline_model_parallel_rank}')
     logging.info(f'Rank {rank} has pipeline component parallel rank {pipeline_component_parallel_rank}')
 
     return (
+        # new
+        tensor_model_parallel_rank,
         pipeline_model_parallel_rank,
         pipeline_component_parallel_rank,
+        model_parallel_size,
         data_parallel_size,
+        pipeline_model_parallel_split_rank_,
+        virtual_pipeline_model_parallel_rank,
+        virtual_pipeline_component_parallel_rank,
+        virtual_pipeline_component_parallel_size
     )
