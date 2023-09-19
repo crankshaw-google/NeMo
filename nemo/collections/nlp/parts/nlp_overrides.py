@@ -387,11 +387,12 @@ class LayerUnitTestStrategy(NLPDDPStrategy):
         assert len(use_interleaving) == 0 or len(use_interleaving) == 3, \
             "LayerUnitTestStratey only supports interleaving for all components or no components"
 
-        if (parallelization_specs["test"]["virtual_pipeline_model_parallel_size"] != \
-            parallelization_specs["stimulus"]["virtual_pipeline_model_parallel_size"]) or ( \
-            parallelization_specs["test"]["virtual_pipeline_model_parallel_size"] != \
-            parallelization_specs["response"]["virtual_pipeline_model_parallel_size"]):
-            print('Warning, non-uniform virtual pipeline parallelism is extremly experimental and most likely has bugs!')
+        if len(use_interleaving) == 3:
+            if (parallelization_specs["test"]["virtual_pipeline_model_parallel_size"] != \
+                parallelization_specs["stimulus"]["virtual_pipeline_model_parallel_size"]) or ( \
+                parallelization_specs["test"]["virtual_pipeline_model_parallel_size"] != \
+                parallelization_specs["response"]["virtual_pipeline_model_parallel_size"]):
+                print('Warning, non-uniform virtual pipeline parallelism is extremly experimental and most likely has bugs!')
 
         # all initial checks passed!
         return parallelization_specs
