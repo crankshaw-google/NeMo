@@ -909,6 +909,8 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         return loss
 
     def validation_epoch_end(self, outputs):
+        rank = torch.distributed.get_rank()
+        print(f'rank {rank} | in validation_epoch_end', flush=True)
         if parallel_state.is_pipeline_last_stage():
             # only the last pipeline parallel stages return loss with their batch size
             if self.cfg.data.get('validation_drop_last', True):
@@ -921,9 +923,10 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         else:
             averaged_loss = torch.tensor(0.0, dtype=torch.float32).cuda()
 
+        print(f'rank {rank} | before broadcast', flush=True)
         # we can only log on one rank if it is rank zero so we broadcast from last rank
-        torch.distributed.broadcast(averaged_loss, get_last_rank())
-
+        # torch.distributed.broadcast(averaged_loss, get_last_rank())
+        print(f'rank {rank} | after broadcast', flush=True)
         self.log('val_loss', averaged_loss, prog_bar=True, rank_zero_only=True, batch_size=1)
 
         return averaged_loss
@@ -1032,9 +1035,12 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         Args:
             stage (str, optional): Can be 'fit', 'validate', 'test' or 'predict'. Defaults to None.
         """
+        rank = torch.distributed.get_rank()
+        print(f'rank {rank} | in setup', flush=True)
         num_parameters_on_device, total_num_parameters = self._get_total_params_across_model_parallel_groups_gpt_bert(
             self.model
         )
+        print(f'rank {rank} | after get param count', flush=True)
 
         logging.info(
             f'Pipeline model parallel rank: {parallel_state.get_pipeline_model_parallel_rank()}, '
@@ -1084,6 +1090,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
             self.setup_validation_data(self.cfg.data)
             self.setup_test_data(self.cfg.data)
 
+        print(f'rank {rank} | before stage == fit', flush=True)
         if stage == 'fit':
             # when using pipeline model parallel the final stage need to initialize word embeddings
             if parallel_state.get_pipeline_model_parallel_world_size() > 1:
@@ -1101,10 +1108,14 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                         parallel_state.set_virtual_pipeline_model_parallel_rank(0)
                 else:
                     if self.cfg.get('share_embeddings_and_output_weights', True):
+                        print(f'rank {rank} | before sync_initial_word_embeddings', flush=True)
                         self.model.sync_initial_word_embeddings()
+                        print(f'rank {rank} | after sync_initial_word_embeddings', flush=True)
 
         if self.cfg.get('transformer_engine', False):
             self.setup_transformer_engine_tp_groups()
+        print(f'rank {rank} | leaving setup', flush=True)
+            
 
     def setup_training_data(self, cfg):
         if hasattr(self, '_train_ds'):
@@ -1234,17 +1245,27 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
 
     def _set_tp_groups(self, module):
         """ Helper method to set tp groups for transformer engine"""
+        rank = torch.distributed.get_rank()
+        print(f'rank {rank} | in _set_tp_groups', flush=True)
 
         if self.cfg.get('transformer_engine', False):
             logging.info(f'Setting up transformer engine modules for tensor parallelism.')
             if self.cfg.get('megatron_amp_O2', 'False'):
+                print(f'rank {rank} | megatron_amp_O2 is True', flush=True)
                 # when using O2 additional module key is added that casts the weights
+                print(f'rank {rank} | module.module.language_model.encoder.layers: ', module.module.language_model.encoder.layers, flush=True)
                 for layer in module.module.language_model.encoder.layers:
+                    print(f'rank {rank} | before set tensor parallel group', flush=True)
                     layer.set_tensor_parallel_group(parallel_state.get_tensor_model_parallel_group())
-
+                    print(f'rank {rank} | after set tensor parallel group', flush=True)
             else:
+                print(f'rank {rank} | module.language_model.encoder.layers: ', module.language_model.encoder.layers, flush=True)
                 for layer in module.language_model.encoder.layers:
+                    print(f'rank {rank} | before set tensor parallel group', flush=True)
                     layer.set_tensor_parallel_group(parallel_state.get_tensor_model_parallel_group())
+                    print(f'rank {rank} | after set tensor parallel group', flush=True)
+        print(f'rank {rank} | leaving _set_tp_groups', flush=True)
+        
 
     def setup_transformer_engine_tp_groups(self):
         """ This should be called after model parallel groups have been initialized

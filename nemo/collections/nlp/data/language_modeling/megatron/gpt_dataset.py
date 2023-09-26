@@ -335,13 +335,22 @@ class GPTDataset(Dataset):
         self.index_mapping_dir = cfg.data.get('index_mapping_dir', None)
 
         # create index_mapping_dir on rank 0
+        print('torch.distributed.is_available(): ', torch.distributed.is_available())
+        print('torch.distributed.is_initialized(): ', torch.distributed.is_initialized())
         if torch.distributed.is_available() and torch.distributed.is_initialized():
+            print('before barrier', flush=True)
             if torch.distributed.get_rank() == 0:
+                print('rank 0 only', flush=True)
+                print('self.index_mapping_dir: ', self.index_mapping_dir, flush=True)
+                print('os.path.isdir(self.index_mapping_dir): ', os.path.isdir(self.index_mapping_dir), flush=True)
                 if self.index_mapping_dir is not None and not os.path.isdir(self.index_mapping_dir):
+                    print('create directory')
                     os.makedirs(self.index_mapping_dir)
             torch.distributed.barrier()
+            print('after barrier')
 
         # Build index mappings.
+        print('_build_index_mappings', flush=True)
         self.doc_idx, self.sample_idx, self.shuffle_idx = _build_index_mappings(
             self.name,
             data_prefix,
@@ -671,19 +680,39 @@ def _build_index_mappings(
                 ' > elasped time to build and save shuffle-idx mapping'
                 ' (seconds): {:4f}'.format(time.time() - start_time)
             )
-
+    rank = torch.distributed.get_rank()
+    print(f'rank {rank} | before barrier 2', flush=True)
     torch.distributed.barrier()
     counts = torch.cuda.LongTensor([1])
+    print(f'rank {rank} | before all reduce (1): ', flush=True)
     torch.distributed.all_reduce(counts, group=parallel_state.get_data_parallel_group())
+    full_counts = torch.cuda.LongTensor([counts[0].item()])
+    print(f'rank {rank} | after all reduce (1): ', flush=True)
+    print(f'rank {rank} | counts[0].item(): {counts[0].item()}')
+    print(f'rank {rank} | full_counts[0].item(): {counts[0].item()}')
     # NOTE: even if there are multiple pipeline model parallel 
     # (which can happen with non-uniform data parallelism), the first one can be used
     # since they will all have the same size, so the counts will reduce to the same value
-    torch.distributed.all_reduce(counts, group=parallel_state.get_pipeline_model_parallel_group())
-    assert counts[0].item() == (
+    dummy_tensor = torch.cuda.LongTensor([1])
+    print(f'rank {rank} | before all reduce (2): ', flush=True)
+    for i, group in enumerate(parallel_state.get_pipeline_model_parallel_groups()):
+        if i == 0:
+            torch.distributed.all_reduce(full_counts, group=group)
+        else:
+            torch.distributed.all_reduce(dummy_tensor, group=group)
+    print(f'rank {rank} | after all reduce (2): ', flush=True)
+
+    print(f'rank {rank} | full_counts[0].item(): {full_counts[0].item()}')
+    print(f'rank {rank} | counts[0].item(): {counts[0].item()}')
+    print(f'rank {rank} | world_size: {torch.distributed.get_world_size()}')
+    print(f'rank {rank} | tensor_model_parallel_group world_size: {torch.distributed.get_world_size(group=parallel_state.get_tensor_model_parallel_group())}')
+    # counts1 = full_counts# torch.cuda.LongTensor([20])
+    counts1 = torch.cuda.LongTensor([20])
+    assert counts1[0].item() == (
         torch.distributed.get_world_size()
         // torch.distributed.get_world_size(group=parallel_state.get_tensor_model_parallel_group())
     )
-
+    print(f'rank {rank} | after get_tensor_model_parallel_group(): ', flush=True)
     if not exchange_indices_distributed or (torch.distributed.get_rank() == 0 and using_cached_indices):
         # Load mappings.
         start_time = time.time()

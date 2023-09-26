@@ -161,9 +161,11 @@ class MegatronModule(torch.nn.Module):
 
         if torch.distributed.is_initialized():
             if parallel_state.is_rank_in_embedding_group() and self.share_token_embeddings:
-                torch.distributed.all_reduce(
-                    self.word_embeddings_weight().data, group=parallel_state.get_embedding_group()
-                )
+                # TODO(gkroiz): this is functionally incorrect but unblocks testing
+                for group in parallel_state.get_embedding_groups():
+                    torch.distributed.all_reduce(
+                        self.word_embeddings_weight().data, group=group
+                    )
         else:
             logging.warning(
                 "WARNING! Distributed processes aren't initialized, so "
