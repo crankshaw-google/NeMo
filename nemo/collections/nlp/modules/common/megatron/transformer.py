@@ -1182,8 +1182,9 @@ class ParallelTransformer(MegatronModule):
                     use_flash_attention=use_flash_attention,
                 )
 
-        # TODO: implement offset calculation for virtual pipeline model parallelism
-        assert parallel_state.get_virtual_pipeline_model_parallel_world_size() is None, (
+        # TODO: implement offset calculation for virtual pipeline model parallelism > 1
+        assert parallel_state.get_virtual_pipeline_model_parallel_world_size() is None or \
+            parallel_state.get_virtual_pipeline_model_parallel_world_size() == 1, (
             'offset calculation has not been implmented with virtual pipeline model parallelism'
         )
 
