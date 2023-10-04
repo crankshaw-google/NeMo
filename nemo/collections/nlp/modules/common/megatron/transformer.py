@@ -1182,11 +1182,12 @@ class ParallelTransformer(MegatronModule):
                     use_flash_attention=use_flash_attention,
                 )
 
-        # TODO: implement offset calculation for virtual pipeline model parallelism > 1
-        assert parallel_state.get_virtual_pipeline_model_parallel_world_size() is None or \
-            parallel_state.get_virtual_pipeline_model_parallel_world_size() == 1, (
-            'offset calculation has not been implmented with virtual pipeline model parallelism'
-        )
+        if parallelization_specs:
+          # TODO: implement offset calculation for virtual pipeline model parallelism > 1
+          assert parallel_state.get_virtual_pipeline_model_parallel_world_size() is None or \
+              parallel_state.get_virtual_pipeline_model_parallel_world_size() == 1, (
+              'offset calculation has not been implmented with virtual pipeline model parallelism'
+          )
 
         if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
             assert num_layers % parallel_state.get_virtual_pipeline_model_parallel_world_size() == 0, (
@@ -1209,7 +1210,7 @@ class ParallelTransformer(MegatronModule):
             if parallelization_specs:
                 pipeline_parallel_rank = parallel_state.get_pipeline_component_parallel_rank()
             else:
-                pipeline_parallel_rank = parallel_state.get_pipeline_model_rank()
+                pipeline_parallel_rank = parallel_state.get_pipeline_model_parallel_rank()
 
             offset = parallel_state.get_virtual_pipeline_model_parallel_rank() * (
                 num_layers // parallel_state.get_virtual_pipeline_model_parallel_world_size()
