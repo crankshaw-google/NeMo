@@ -563,27 +563,8 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
 
     def log_step_time(self, step_time_ns):
         step_time = step_time_ns / 1000000000
-        job_timestamp = os.environ.get("JOB_TIMESTAMP")
-        num_nodes = os.environ.get("NNODES")
-        config_file = os.environ.get("TRAINING_FILENAME")
-        image_version = os.environ.get("IMAGE_VERSION")
         instance_zone = "unknown"
-        log_info = {
-            "zone": instance_zone,
-            "job_timestamp": job_timestamp,
-            "job_type": "nemo",
-            "job_config": {
-                "config_file": config_file,
-                "image_version": image_version,
-                "num_nodes": int(num_nodes)
-            },
-            "metric": {
-                "name": "step_time",
-                "value": step_time
-            }
-        }
-        print()  # work around missing newline in Epoch logs
-        print(json.dumps(log_info))
+        print(f"step_time: {step_time} s")
 
     def training_step(self, dataloader_iter, batch_idx):
         """
