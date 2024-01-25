@@ -26,9 +26,7 @@ from pytorch_lightning.accelerators import CPUAccelerator
 from pytorch_lightning.plugins.precision.native_amp import NativeMixedPrecisionPlugin
 from pytorch_lightning.trainer.trainer import Trainer
 
-import json
 import nvtx
-import os
 import time
 
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
@@ -541,15 +539,15 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
 
     def on_train_batch_start(self, batch, batch_idx):
         super().on_train_batch_start(batch, batch_idx)
-        P = parallel_state.get_pipeline_model_parallel_rank()
-        T = parallel_state.get_tensor_model_parallel_rank()
-        D = parallel_state.get_data_parallel_rank()
-        R = torch.distributed.get_rank()
+        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        tp_rank = parallel_state.get_tensor_model_parallel_rank()
+        dp_rank = parallel_state.get_data_parallel_rank()
+        global_rank = torch.distributed.get_rank()
 
-        self._nvtx_range = nvtx.start_range(f'Training Step [GPU rank {R} (D{D}P{P}T{T})]', color='green')
+        self._nvtx_range = nvtx.start_range(f'Training Step [GPU rank {global_rank} (D{dp_rank}P{pp_rank}T{tp_rank})]', color='green')
 
         self.timestamp = None
-        if R == 0:
+        if global_rank == 0:
             self.timestamp = time.time_ns()
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
@@ -563,7 +561,6 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
 
     def log_step_time(self, step_time_ns):
         step_time = step_time_ns / 1000000000
-        instance_zone = "unknown"
         print(f"step_time: {step_time} s")
 
     def training_step(self, dataloader_iter, batch_idx):
