@@ -28,6 +28,10 @@ torch._dynamo.config.suppress_errors = True
 
 mp.set_start_method("spawn", force=True)
 
+import utilities.monitor_collectives
+
+utilities.monitor_collectives.shunt_torch_communication()
+
 
 @hydra_runner(config_path="conf", config_name="megatron_gpt_config")
 def main(cfg) -> None:

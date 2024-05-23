@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 import inspect
 import os
+import sys
 import uuid
 from abc import abstractmethod
 from os import path
@@ -138,6 +139,7 @@ class ModelPT(LightningModule, Model):
         self._optimizer = None
         self._scheduler = None
         self.set_trainer(trainer)
+        self._microbatch_to_global_batch = 1
 
         self._save_restore_connector = SaveRestoreConnector()
 
@@ -1735,27 +1737,11 @@ class ModelPT(LightningModule, Model):
             if self.cfg.nsys_profile.get('enabled', False):
                 # Nsys profiling options
                 self._nsys_profile_enabled = True
-                self._nsys_profile_start_step = self.cfg.nsys_profile.get('start_step', 0)
-                self._nsys_profile_end_step = self.cfg.nsys_profile.get('end_step', 0)
+                self._nsys_profile_steps = set([int(step) for step in self.cfg.nsys_profile.get('profile_steps', [0])])
                 self._nsys_profile_ranks = self.cfg.nsys_profile.get('ranks', [0])
                 self._nsys_profile_gen_shape = self.cfg.nsys_profile.get('gen_shape', False)
 
-                if type(self._nsys_profile_start_step) == int:
-                    logging.info(f'Nsys profiling setup with start_step: {self._nsys_profile_start_step}')
-                else:
-                    raise ValueError(
-                        f'Nsys start_step must be of type int. Found: {type(self._nsys_profile_start_step)}'
-                    )
-
-                if type(self._nsys_profile_end_step) == int:
-                    logging.info(f'Nsys profiling setup with end_step: {self._nsys_profile_end_step}')
-                else:
-                    raise ValueError(f'Nsys end_step must be of type int. Found: {type(self._nsys_profile_end_step)}')
-
-                if self._nsys_profile_end_step >= self._nsys_profile_start_step:
-                    pass
-                else:
-                    raise ValueError(f'Nsys end_step must be greater than or equal to nsys start_step')
+                logging.info(f"Nsys profiling on ranks: {self._nsys_profile_ranks} and steps {self._nsys_profile_steps}")
 
         if self.cfg.get('memory_profile', None) is not None:
             if self.cfg.memory_profile.get('enabled', False):
@@ -1814,22 +1800,32 @@ class ModelPT(LightningModule, Model):
             https://pytorch-lightning.readthedocs.io/en/stable/common/lightning_module.html#on-train-batch-start
             We use it here to enable nsys profiling and dynamic freezing.
         """
+        
+        # TODO (gkroiz): without this the global_batch_index is misaligned by 1 index.
+        if batch_idx != 0:
+            batch_idx += 1
+        global_batch_idx = batch_idx / self._microbatch_to_global_batch
+
+        logging.info(f"Starting batch {global_batch_idx}")
+        sys.stdout.flush()
+        sys.stderr.flush()
 
         # nsys profiling
         if self.device.type == 'cuda':
             if hasattr(self, '_nsys_profile_enabled'):
                 if self._nsys_profile_enabled and not self._nsys_profile_started:
-                    if batch_idx >= self._nsys_profile_start_step and get_rank() in self._nsys_profile_ranks:
-                        logging.info("====== Start nsys profiling ======")
+                    if global_batch_idx in self._nsys_profile_steps and get_rank() in self._nsys_profile_ranks:
+                        print(f"====== Start nsys profiling for rank {get_rank()} batch {global_batch_idx} ======", flush=True)
                         torch.cuda.cudart().cudaProfilerStart()
                         if self._nsys_profile_gen_shape:
                             torch.autograd.profiler.emit_nvtx(record_shapes=True).__enter__()
                         self._nsys_profile_started = True
+                        self._nsys_profile_complete = False
 
             if hasattr(self, '_memory_profile_enabled'):
                 if self._memory_profile_enabled and not self._memory_profile_started:
-                    if batch_idx >= self._memory_profile_start_step and get_rank() == self._memory_profile_rank:
-                        logging.info("====== Start CUDA memory profiling ======")
+                    if global_batch_idx >= self._memory_profile_start_step and get_rank() == self._memory_profile_rank:
+                        print(f"====== Start CUDA memory profiling for rank {get_rank()} batch {global_batch_idx} ======", flush=True)
                         torch.cuda.memory._record_memory_history(max_entries=100000)
                         self._memory_profile_started = True
 
@@ -1861,18 +1857,32 @@ class ModelPT(LightningModule, Model):
             We use it here to enable nsys profiling.
         """
 
+        # TODO (gkroiz): without this the global_batch_index is misaligned by 1 index.
+        if batch_idx != 0:
+            batch_idx += 1
+        global_batch_idx = batch_idx / self._microbatch_to_global_batch
+
+        logging.info(f"[HEARTBEAT] Finished batch {global_batch_idx}")
+        sys.stdout.flush()
+        sys.stderr.flush()
+
         if self.device.type == 'cuda':
             if hasattr(self, '_nsys_profile_enabled'):
                 if self._nsys_profile_enabled and not self._nsys_profile_complete:
-                    if batch_idx >= self._nsys_profile_end_step and get_rank() in self._nsys_profile_ranks:
-                        logging.info("====== End nsys profiling ======")
-                        torch.cuda.cudart().cudaProfilerStop()
-                        self._nsys_profile_complete = True
+                    if get_rank() in self._nsys_profile_ranks:
+                        next_batch = global_batch_idx + 1
+                        if next_batch not in self._nsys_profile_steps:
+                            print(f"====== End nsys profiling for rank {get_rank()} batch {global_batch_idx} ======", flush=True)
+                            torch.cuda.cudart().cudaProfilerStop()
+                            self._nsys_profile_started = False
+                            self._nsys_profile_complete = True
+                        else:
+                            print(f"====== Continuing nsys profiling for rank {get_rank()} batch {global_batch_idx} ======", flush=True)
 
             if hasattr(self, '_memory_profile_enabled'):
                 if self._memory_profile_enabled and not self._memory_profile_complete:
-                    if batch_idx >= self._memory_profile_end_step and get_rank() == self._memory_profile_rank:
-                        logging.info("====== End CUDA memory profiling ======")
+                    if global_batch_idx >= self._memory_profile_end_step and get_rank() == self._memory_profile_rank:
+                        print(f"====== End CUDA memory profiling for rank {get_rank()} batch {global_batch_idx} ======", flush=True)
                         torch.cuda.memory._dump_snapshot(
                             f'{self._memory_profile_output_path}/memory_profile_rank{self._memory_profile_rank}.pickle'
                         )
