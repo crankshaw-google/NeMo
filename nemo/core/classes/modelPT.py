@@ -1801,7 +1801,7 @@ class ModelPT(LightningModule, Model):
             We use it here to enable nsys profiling and dynamic freezing.
         """
 
-        # TODO (gkroiz): without this the global_batch_index is misaligned by 1 index.
+        # NOTE(gkroiz): without this the global_batch_index is misaligned by 1 index.
         if batch_idx != 0:
             batch_idx += 1
         global_batch_idx = batch_idx / self._microbatch_to_global_batch
@@ -1857,9 +1857,6 @@ class ModelPT(LightningModule, Model):
             We use it here to enable nsys profiling.
         """
 
-        # # TODO (gkroiz): without this the global_batch_index is misaligned by 1 index.
-        # if batch_idx != 0:
-        #     batch_idx += 1
         global_batch_idx = batch_idx // self._microbatch_to_global_batch
 
         logging.info(f"[HEARTBEAT] Finished batch {global_batch_idx}, {batch_idx=}, {self._microbatch_to_global_batch=}")
