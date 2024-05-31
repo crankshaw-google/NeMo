@@ -24,11 +24,10 @@ FROM ${BASE_IMAGE} as nemo-deps
 WORKDIR /workspace/
 # Install megatron core, this can be removed once 0.3 pip package is released
 # We leave it here in case we need to work off of a specific commit in main
+ARG MEGATRON_VER=unknown
 RUN git clone https://github.com/crankshaw-google/Megatron-LM.git && \
   cd Megatron-LM && \
-  # TODO(crankshaw): Do not check in until this is updated to main after Megatron-LM PR is checked in
-  git checkout crankshaw/pull_upstream && \
-  git pull && \
+  git checkout $MEGATRON_VER && \
   pip install .
 
 # copy nemo source into a scratch image
