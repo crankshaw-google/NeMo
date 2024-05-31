@@ -30,6 +30,9 @@ from pytorch_lightning.accelerators import CPUAccelerator
 from pytorch_lightning.loops.fetchers import _DataFetcherWrapper
 from pytorch_lightning.trainer.trainer import Trainer
 
+import nvtx
+import time
+
 from nemo.collections.common.parts.utils import extend_instance
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
     MegatronPretrainingRandomSampler,
@@ -375,9 +378,9 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
             cp_size = cfg.get('context_parallel_size', 1)
             data_parallel_world_size = trainer.world_size // (mp_size * cp_size)
             grad_accum_steps = cfg.get('global_batch_size') // (cfg.get('micro_batch_size') * data_parallel_world_size)
-            if hasattr(self, '_nsys_profile_enabled'):
-                self._nsys_profile_start_step *= grad_accum_steps
-                self._nsys_profile_end_step *= grad_accum_steps
+
+            self._microbatch_to_global_batch = grad_accum_steps
+
             if hasattr(self, '_memory_profile_enabled'):
                 self._memory_profile_start_step *= grad_accum_steps
                 self._memory_profile_end_step *= grad_accum_steps
@@ -400,6 +403,34 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
 
         if self.use_loss_mask and self.transformer_config.sequence_parallel:
             raise ValueError('Loss mask is not supported with sequence parallelism.')
+
+    def on_train_batch_start(self, batch, batch_idx):
+        super().on_train_batch_start(batch, batch_idx)
+        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        tp_rank = parallel_state.get_tensor_model_parallel_rank()
+        dp_rank = parallel_state.get_data_parallel_rank()
+        global_rank = torch.distributed.get_rank()
+
+        self._nvtx_range = nvtx.start_range(f'training_step', color='green')
+
+        self.timestamp = None
+        if global_rank == 0:
+            self.timestamp = time.time_ns()
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        # Finish range before running base class hooks for more accurate times
+        if self.timestamp:
+            now = time.time_ns()
+            self.log_step_time(now - self.timestamp)
+            self.timestamp = None
+
+        nvtx.end_range(self._nvtx_range)
+
+        super().on_train_batch_end(outputs, batch, batch_idx)
+
+    def log_step_time(self, step_time_ns):
+        step_time = step_time_ns / 1000000000
+        print(f"step_time: {step_time} s")
 
     def set_inference_config(self, inference_config):
         self._inference_config = inference_config
@@ -856,7 +887,8 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
                 # synchronize asynchronous grad reductions
                 # note: not necessary, but reduces performance degradation
                 # from multiple simultaneous NCCL calls
-                self._optimizer._finish_bucket_grad_sync()
+                with nvtx.annotate(message=f'Sync Gradients [stall for complete]', color="purple"):
+                    self._optimizer._finish_bucket_grad_sync()
             # else: Mcore distributed optim calls finalize_model_grads to finish grad sync
         elif self.megatron_amp_O2:
             # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
@@ -880,7 +912,8 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
         ):
             self.megatron_timer_start('allreduce_first_last_embeddings', log_level=1)
             # when using pipeline parallelism the first and last stage must keep embeddings in sync
-            self.allreduce_first_last_embeddings()
+            with nvtx.annotate(message=f'Sync Embeddings', color="purple"):
+                self.allreduce_first_last_embeddings()
             self.megatron_timer_stop('allreduce_first_last_embeddings')
 
         if self.log_memory_usage:
@@ -899,10 +932,26 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
             # it should be casted to other pipeline stages for logging.
             # we can avoid this broadcast by updating the PTL log function to accept specific ranks
             if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-                if torch.distributed.get_rank() == get_last_rank():
-                    torch.distributed.send(loss_mean, 0)
-                elif torch.distributed.get_rank() == 0:
-                    torch.distributed.recv(loss_mean, get_last_rank())
+                if self.loss_broadcast_src_rank is None:
+                    dp_size = parallel_state.get_data_parallel_world_size()
+                    tp_size = parallel_state.get_tensor_model_parallel_world_size()
+                    pp_size = parallel_state.get_pipeline_model_parallel_world_size()
+                    rank_in_dp_tp_group = torch.distributed.get_rank() % (dp_size * tp_size)
+                    last_pipeline_stage_offset = (tp_size * dp_size) * (pp_size - 1)
+                    self.loss_broadcast_src_rank = last_pipeline_stage_offset + rank_in_dp_tp_group
+                with nvtx.annotate(message=f'Loss Broadcast', color="purple"):
+                    torch.distributed.broadcast(
+                        loss_mean, self.loss_broadcast_src_rank, group=parallel_state.get_pipeline_model_parallel_group(),
+                    )
+                # NOTE(crankshaw): In the current version of NeMo, the loss is
+                # shared via a send-recv. However, in GCP, we don't support
+                # cross-rail NCCL communication 
+                # if torch.distributed.get_rank() == get_last_rank():
+                #     with nvtx.annotate(message=f'Loss Send', color="purple"):
+                #         torch.distributed.send(loss_mean, 0)
+                # elif torch.distributed.get_rank() == 0:
+                #     with nvtx.annotate(message=f'Loss Recv', color="purple"):
+                #         torch.distributed.recv(loss_mean, get_last_rank())
             self.log('reduced_train_loss', loss_mean, prog_bar=True, rank_zero_only=True, batch_size=1)
 
             # (@adithyare) we need to check for the _scaler attribute to enable pp>1 for adapter training

@@ -14,6 +14,9 @@
 
 
 # To suppress BF16 compile related issue in the CI runs with turing/V100
+
+import os
+
 import torch._dynamo
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf, open_dict
@@ -27,6 +30,17 @@ from nemo.utils.exp_manager import exp_manager
 torch._dynamo.config.suppress_errors = True
 
 mp.set_start_method("spawn", force=True)
+
+if not os.environ.get("DISABLE_MONITOR_COLLECTIVES", "FALSE") == "TRUE":
+
+  try:
+      import utilities.monitor_collectives
+
+      utilities.monitor_collectives.shunt_torch_communication()
+  except ModuleNotFoundError as e:
+      print("Monitor collectives not available. Running without monitor collectives")
+else:
+  print("Running without monitor collectives")
 
 
 @hydra_runner(config_path="conf", config_name="megatron_gpt_config")
