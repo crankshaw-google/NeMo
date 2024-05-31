@@ -26,7 +26,8 @@ WORKDIR /workspace/
 # We leave it here in case we need to work off of a specific commit in main
 RUN git clone https://github.com/crankshaw-google/Megatron-LM.git && \
   cd Megatron-LM && \
-  git checkout crankshaw/pull_upstream && \ # TODO(crankshaw): Do not check in until this is updated to main after Megatron-LM PR is checked in
+  # TODO(crankshaw): Do not check in until this is updated to main after Megatron-LM PR is checked in
+  git checkout crankshaw/pull_upstream && \
   git pull && \
   pip install .
 
