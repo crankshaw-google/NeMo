@@ -14,125 +14,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.01-py3
+ARG BASE_IMAGE=us-central1-docker.pkg.dev/supercomputer-testing/redrock-dev/nemo-deps:20240521-204810
 
 # build an image that includes only the nemo dependencies, ensures that dependencies
 # are included first for optimal caching, and useful for building a development
 # image (by specifying build target as `nemo-deps`)
 FROM ${BASE_IMAGE} as nemo-deps
 
-# dependency flags; should be declared after FROM
-# torchaudio: not required by default
-ARG REQUIRE_TORCHAUDIO=false
-# k2: not required by default
-ARG REQUIRE_K2=false
-# ais cli: not required by default, install only if required
-ARG REQUIRE_AIS_CLI=false
-
-# Ensure apt-get won't prompt for selecting options
-ENV DEBIAN_FRONTEND=noninteractive
-# libavdevice-dev required for latest torchaudio
-RUN apt-get update && \
-  apt-get upgrade -y && \
-  apt-get install -y \
-  libsndfile1 sox \
-  libfreetype6 \
-  swig \
-  ffmpeg \
-  libavdevice-dev && \
-  rm -rf /var/lib/apt/lists/*
-
-# libtool, ... , libgts-dev are required for graphviz
-# graphviz is required for k2 and pynini visualization
-RUN apt-get update && \
-  apt-get install -y \
-  libtool \
-  libltdl-dev \
-  automake \
-  autoconf \
-  bison \
-  flex \
-  tcl \
-  ghostscript \
-  libgd-dev \
-  fontconfig \
-  libcairo2-dev \
-  libpango1.0-dev \
-  libgts-dev && \
-  rm -rf /var/lib/apt/lists/*
-
 WORKDIR /workspace/
 # Install megatron core, this can be removed once 0.3 pip package is released
 # We leave it here in case we need to work off of a specific commit in main
-RUN git clone https://github.com/NVIDIA/Megatron-LM.git && \
+ARG MEGATRON_VER=unknown
+RUN git clone https://github.com/crankshaw-google/Megatron-LM.git && \
   cd Megatron-LM && \
-  git checkout 36e9b6bf3d8034b10c9bbd9fc357c2df2bd1515c && \
-  git cherry-pick -n e69187bc3679ea5841030a165d587bb48b56ee77 && \
+  git checkout $MEGATRON_VER && \
   pip install .
-
-# Performance optimizations for distributed optimizer: https://github.com/NVIDIA/apex/pull/1771
-RUN git clone https://github.com/NVIDIA/apex.git && \
-  cd apex && \
-  git checkout f058162b215791b15507bb542f22ccfde49c872d && \
-  pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
-
-# Transformer Engine 1.2.0
-RUN git clone https://github.com/NVIDIA/TransformerEngine.git && \
-  cd TransformerEngine && \
-  git fetch origin da30634a6c9ccdbb6c587b6c93b1860e4b038204 && \
-  git checkout FETCH_HEAD && \
-  git submodule init && git submodule update && \
-  NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
-
-WORKDIR /tmp/
-
-# uninstall stuff from base container
-RUN pip3 uninstall -y sacrebleu torchtext
-
-# build torchaudio
-WORKDIR /tmp/torchaudio_build
-COPY scripts/installers /tmp/torchaudio_build/scripts/installers/
-RUN INSTALL_MSG=$(/bin/bash /tmp/torchaudio_build/scripts/installers/install_torchaudio_latest.sh); INSTALL_CODE=$?; \
-  echo ${INSTALL_MSG}; \
-  if [ ${INSTALL_CODE} -ne 0 ]; then \
-  echo "torchaudio installation failed";  \
-  if [ "${REQUIRE_TORCHAUDIO}" = true ]; then \
-  exit ${INSTALL_CODE};  \
-  else echo "Skipping failed torchaudio installation"; fi \
-  else echo "torchaudio installed successfully"; fi
-
-COPY scripts /tmp/nemo/scripts/
-# install correct graphviz version (k2 and pynini visualization tool), skip if installation fails
-RUN INSTALL_MSG=$(/bin/bash /tmp/nemo/scripts/installers/install_graphviz.sh --docker); INSTALL_CODE=$?; \
-  echo ${INSTALL_MSG}; \
-  if [ ${INSTALL_CODE} -ne 0 ]; then \
-  echo "graphviz installation failed";  \
-  if [ "${REQUIRE_K2}" = true ]; then \
-  exit ${INSTALL_CODE};  \
-  else echo "Skipping failed graphviz installation"; fi \
-  else echo "graphviz installed successfully"; fi
-
-# install k2, skip if installation fails
-COPY scripts /tmp/nemo/scripts/
-RUN INSTALL_MSG=$(/bin/bash /tmp/nemo/scripts/installers/install_k2.sh); INSTALL_CODE=$?; \
-  echo ${INSTALL_MSG}; \
-  if [ ${INSTALL_CODE} -ne 0 ]; then \
-  echo "k2 installation failed";  \
-  if [ "${REQUIRE_K2}" = true ]; then \
-  exit ${INSTALL_CODE};  \
-  else echo "Skipping failed k2 installation"; fi \
-  else echo "k2 installed successfully"; fi
-
-# install nemo dependencies
-WORKDIR /tmp/nemo
-ENV LHOTSE_REQUIRE_TORCHAUDIO=0
-COPY requirements .
-RUN for f in $(ls requirements*.txt); do pip3 install --disable-pip-version-check --no-cache-dir -r $f; done
-
-# install flash attention
-RUN pip install flash-attn
-# install numba for latest containers
-RUN pip install numba>=0.57.1
 
 # copy nemo source into a scratch image
 FROM scratch as nemo-src
@@ -167,13 +63,3 @@ COPY tutorials /workspace/nemo/tutorials
 
 RUN printf "#!/bin/bash\njupyter lab --no-browser --allow-root --ip=0.0.0.0" >> start-jupyter.sh && \
   chmod +x start-jupyter.sh
-
-# If required, install AIS CLI
-RUN if [ "${REQUIRE_AIS_CLI}" = true ]; then \
-  INSTALL_MSG=$(/bin/bash scripts/installers/install_ais_cli_latest.sh); INSTALL_CODE=$?; \
-  echo ${INSTALL_MSG}; \
-  if [ ${INSTALL_CODE} -ne 0 ]; then \
-  echo "AIS CLI installation failed"; \
-  exit ${INSTALL_CODE}; \
-  else echo "AIS CLI installed successfully"; fi \
-  else echo "Skipping AIS CLI installation"; fi
